@@ -19,6 +19,22 @@ import { normalizeRuntime } from '../runtime/runtimeConfig.js';
 import { PREDEFINED_RULE_SETS, SING_BOX_CONFIG, SING_BOX_CONFIG_V1_11, generateSubconverterConfig } from '../config/index.js';
 
 const DEFAULT_USER_AGENT = 'curl/7.74.0';
+// ====== 新增：用于单独获取机场流量信息的辅助函数 ======
+async function fetchUserInfo(config, ua) {
+    try {
+        if (!config) return null;
+        // 支持处理多个订阅链接（通常用 | 或换行符分割）
+        const urls = config.split(/[|\n]/).map(u => u.trim()).filter(u => u.startsWith('http://') || u.startsWith('https://'));
+        if (urls.length > 0) {
+            const res = await fetch(urls[0], { method: "GET", headers: { "User-Agent": ua } });
+            return res.headers.get("subscription-userinfo");
+        }
+    } catch (e) {
+        // 忽略错误，防止影响正常逻辑
+    }
+    return null;
+}
+// ===================================================
 
 export function createApp(bindings = {}) {
     const runtime = normalizeRuntime(bindings);
@@ -158,9 +174,14 @@ export function createApp(bindings = {}) {
                 includeAutoSelect
             );
             await builder.build();
-            return c.text(builder.formatConfig(), 200, {
-                'Content-Type': 'text/yaml; charset=utf-8'
-            });
+            // 【新增】获取并写入流量信息
+            const userInfo = await fetchUserInfo(config, ua);
+            const headers = { 'Content-Type': 'text/yaml; charset=utf-8' };
+            if (userInfo) {
+                headers['subscription-userinfo'] = userInfo;
+            }
+
+            return c.text(builder.formatConfig(), 200, headers);
         } catch (error) {
             return handleError(c, error, runtime.logger);
         }
@@ -200,7 +221,11 @@ export function createApp(bindings = {}) {
             builder.setSubscriptionUrl(c.req.url);
             await builder.build();
 
-            c.header('subscription-userinfo', 'upload=0; download=0; total=10737418240; expire=2546249531');
+            // 【修改】获取真实的流量信息
+            const userInfo = await fetchUserInfo(config, ua);
+            if (userInfo) {
+                c.header('subscription-userinfo', userInfo);
+            }
             return c.text(builder.formatConfig());
         } catch (error) {
             return handleError(c, error, runtime.logger);
